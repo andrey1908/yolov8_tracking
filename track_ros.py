@@ -80,7 +80,8 @@ class RosTracker:
             half=False,  # use FP16 half-precision inference
             dnn=False,  # use OpenCV DNN for ONNX inference
             vid_stride=1,  # video frame-rate stride
-            retina_masks=False):
+            retina_masks=False,
+            vis=False):
 
         # Load model
         self.half = half
@@ -89,6 +90,7 @@ class RosTracker:
         self.classes = classes
         self.agnostic_nms = agnostic_nms
         self.max_det = max_det
+        self.vis = vis
 
         self.device = select_device(device)
         self.model = AutoBackend(
@@ -171,14 +173,14 @@ class RosTracker:
                 mask = output[7]
 
                 # choose color mode
-                
-                # color = colors(id)
-
-                color = torch.zeros(3)
-                color[0] = id & 0xFF
-                color[1] = (id >> 8) & 0xFF
-                color[2] = (id >> 16) & 0xFF
-                color.to(im.device)
+                if self.vis:
+                    color = colors(id)
+                else:
+                    color = torch.zeros(3)
+                    color[0] = id & 0xFF
+                    color[1] = (id >> 8) & 0xFF
+                    color[2] = (id >> 16) & 0xFF
+                    color.to(im.device)
 
                 out_img[mask] = torch.Tensor(color).to(im.device)
         else:
@@ -230,6 +232,7 @@ def parse_opt():
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--vid-stride', type=int, default=1, help='video frame-rate stride')
     parser.add_argument('--retina-masks', action='store_true', help='whether to plot masks in native resolution')
+    parser.add_argument('--vis', action='store_true')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     opt.tracking_config = ROOT / 'trackers' / opt.tracking_method / 'configs' / (opt.tracking_method + '.yaml')
