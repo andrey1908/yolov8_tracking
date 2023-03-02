@@ -97,18 +97,8 @@ class RosTracker:
             yolo_weights, device=self.device, dnn=dnn, fp16=self.half)
         self.stride, self.names, self.pt = \
             self.model.stride, self.model.names, self.model.pt
+        print(self.names)
         self.imgsz = check_imgsz(imgsz, stride=self.stride)  # check image size
-
-        # Dataloader
-        self.dataset = RosImages(
-            "/kitti/camera_color_left/image_raw",
-            self.track_callback,
-            imgsz=self.imgsz,
-            stride=self.stride,
-            auto=self.pt,
-            transforms=getattr(self.model.model, 'transforms', None))
-        self.pub = rospy.Publisher("/tracked_image", RosImage, queue_size=1)
-        self.bridge = CvBridge()
 
         self.model.warmup(imgsz=(1, 3, *self.imgsz))  # warmup
 
@@ -123,6 +113,17 @@ class RosTracker:
         self.seen, self.dt = \
             0, (Profile(), Profile(), Profile(), Profile())
         self.curr_frame, self.prev_frame = None, None
+
+        # Dataloader
+        self.dataset = RosImages(
+            "/kitti/camera_color_left/image_raw",
+            self.track_callback,
+            imgsz=self.imgsz,
+            stride=self.stride,
+            auto=self.pt,
+            transforms=getattr(self.model.model, 'transforms', None))
+        self.pub = rospy.Publisher("/tracked_image", RosImage, queue_size=1)
+        self.bridge = CvBridge()
 
     @torch.no_grad()
     def track_callback(self, im, im0, header):
@@ -165,12 +166,15 @@ class RosTracker:
                 output = self.tracker.update(det.cpu(), im0, masks)
             
             # draw boxes for visualization
-            for output in output:
-                bbox = output[0:4]
-                id = output[4]
-                cls = output[5]
-                conf = output[6]
-                mask = output[7]
+            for out in output:
+                bbox = out[0:4]
+                id = out[4]
+                cls = out[5]
+                conf = out[6]
+                mask = out[7]
+                if id == 0:
+                    rospy.logfatal("id = 0")
+                    rospy.signal_shutdown("id = 0")
 
                 # choose color mode
                 if self.vis:
