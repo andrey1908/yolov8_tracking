@@ -125,7 +125,7 @@ class RosTracker:
         self.curr_frame, self.prev_frame = None, None
 
     @torch.no_grad()
-    def track_callback(self, im, im0):
+    def track_callback(self, im, im0, header):
         with self.dt[0]:
             im = torch.from_numpy(im).to(self.device)
             im = im.half() if self.half else im.float()  # uint8 to fp16/32
@@ -191,6 +191,7 @@ class RosTracker:
         out_img = cv2.resize(out_img, (im0.shape[1], im0.shape[0]),
             interpolation=cv2.INTER_NEAREST)
         msg = self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8")
+        msg.header = header
         self.pub.publish(msg)
 
         self.prev_frame = self.curr_frame
