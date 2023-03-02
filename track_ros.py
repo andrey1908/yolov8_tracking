@@ -1,4 +1,5 @@
 import argparse
+import rospy
 import cv2
 import os
 # limit the number of cpus used by high performance libraries
@@ -188,6 +189,7 @@ def run(
                     txt_file_name = p.parent.name  # get folder name containing current img
                     save_path = str(save_dir / p.parent.name)  # im.jpg, vid.mp4, ...
             curr_frames[i] = im0
+            save_path = str(save_dir / f"{seen}.png")
 
             txt_path = str(save_dir / 'tracks' / txt_file_name)  # im.txt
             s += '%gx%g ' % im.shape[2:]  # print string
@@ -219,19 +221,20 @@ def run(
 
                 # pass detections to strongsort
                 with dt[3]:
-                    outputs[i] = tracker_list[i].update(det.cpu(), im0)
+                    outputs[i] = tracker_list[i].update(det.cpu(), im0, masks[i])
                 
                 # draw boxes for visualization
+                out_img = torch.zeros(im.shape, device=im.device).squeeze().permute(1, 2, 0)
                 if len(outputs[i]) > 0:
                     
-                    if is_seg:
-                        # Mask plotting
-                        annotator.masks(
-                            masks[i],
-                            colors=[colors(x, True) for x in det[:, 5]],
-                            im_gpu=torch.as_tensor(im0, dtype=torch.float16).to(device).permute(2, 0, 1).flip(0).contiguous() /
-                            255 if retina_masks else im[i]
-                        )
+                    # if is_seg:
+                    #     # Mask plotting
+                    #     annotator.masks(
+                    #         masks[i],
+                    #         colors=[colors(x, True) for x in det[:, 5]],
+                    #         im_gpu=torch.as_tensor(im0, dtype=torch.float16).to(device).permute(2, 0, 1).flip(0).contiguous() /
+                    #         255 if retina_masks else im[i]
+                    #     )
                     
                     for j, (output) in enumerate(outputs[i]):
                         
@@ -239,6 +242,20 @@ def run(
                         id = output[4]
                         cls = output[5]
                         conf = output[6]
+
+                        if is_seg:
+                            # choose color mode
+                            
+                            # color = colors(id)
+
+                            color = torch.zeros(3)
+                            color[0] = id & 0xFF
+                            color[1] = (id >> 8) & 0xFF
+                            color[2] = (id >> 16) & 0xFF
+                            color.to(im.device)
+
+                            mask = output[7]
+                            out_img[mask] = torch.Tensor(color).to(im.device)
 
                         if save_txt:
                             # to MOT format
@@ -257,7 +274,7 @@ def run(
                             label = None if hide_labels else (f'{id} {names[c]}' if hide_conf else \
                                 (f'{id} {conf:.2f}' if hide_class else f'{id} {names[c]} {conf:.2f}'))
                             color = colors(c, True)
-                            annotator.box_label(bbox, label, color=color)
+                            # annotator.box_label(bbox, label, color=color)
                             
                             if save_trajectories and tracking_method == 'strongsort':
                                 q = output[7]
@@ -272,6 +289,9 @@ def run(
                 
             # Stream results
             im0 = annotator.result()
+            out_img = out_img.byte().cpu().numpy()
+            out_img = cv2.resize(out_img, (im0s.shape[1], im0s.shape[0]),
+                interpolation=cv2.INTER_NEAREST)
             if show_vid:
                 if platform.system() == 'Linux' and p not in windows:
                     windows.append(p)
@@ -283,19 +303,20 @@ def run(
 
             # Save results (image with detections)
             if save_vid:
-                if vid_path[i] != save_path:  # new video
-                    vid_path[i] = save_path
-                    if isinstance(vid_writer[i], cv2.VideoWriter):
-                        vid_writer[i].release()  # release previous video writer
-                    if vid_cap:  # video
-                        fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                        w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    else:  # stream
-                        fps, w, h = 10, im0.shape[1], im0.shape[0]
-                    save_path = str(Path(save_path).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
-                    vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-                vid_writer[i].write(im0)
+                # if vid_path[i] != save_path:  # new video
+                #     vid_path[i] = save_path
+                #     if isinstance(vid_writer[i], cv2.VideoWriter):
+                #         vid_writer[i].release()  # release previous video writer
+                #     if vid_cap:  # video
+                #         fps = vid_cap.get(cv2.CAP_PROP_FPS)
+                #         w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                #         h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                #     else:  # stream
+                #         fps, w, h = 10, im0.shape[1], im0.shape[0]
+                #     save_path = str(Path(save_path).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
+                #     vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+                # vid_writer[i].write(im0)
+                cv2.imwrite(save_path, out_img)
 
             prev_frames[i] = curr_frames[i]
             
