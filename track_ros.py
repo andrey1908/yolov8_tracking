@@ -1,7 +1,7 @@
 import argparse
 import rospy
 from cv_bridge import CvBridge
-from sensor_msgs.msg import Image as RosImage
+from sensor_msgs.msg import Image
 import cv2
 import os
 from tqdm import tqdm
@@ -34,7 +34,8 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 import logging
 from yolov8.ultralytics.nn.autobackend import AutoBackend
-from yolov8.ultralytics.yolo.data.dataloaders.stream_loaders import LoadImages, LoadStreams, RosImages
+from yolov8.ultralytics.yolo.data.augment import LetterBox
+from yolov8.ultralytics.yolo.data.dataloaders.stream_loaders import LoadImages, LoadStreams
 from yolov8.ultralytics.yolo.data.utils import IMG_FORMATS, VID_FORMATS
 from yolov8.ultralytics.yolo.utils import DEFAULT_CFG, LOGGER, SETTINGS, callbacks, colorstr, ops
 from yolov8.ultralytics.yolo.utils.checks import check_file, check_imgsz, check_imshow, print_args, check_requirements
@@ -44,6 +45,41 @@ from yolov8.ultralytics.yolo.utils.ops import Profile, non_max_suppression, scal
 from yolov8.ultralytics.yolo.utils.plotting import Annotator, colors, save_one_box
 
 from trackers.multi_tracker_zoo import create_tracker
+
+
+class RosImages:
+    # YOLOv8 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
+    def __init__(self, topic, callback, imgsz=640, stride=32, auto=True, transforms=None):
+        self.sub = rospy.Subscriber(topic, Image, self.cb)
+        self.callback = callback
+        self.bridge = CvBridge()
+
+        self.imgsz = imgsz
+        self.stride = stride
+        self.auto = auto
+        self.transforms = transforms  # optional
+
+    def cb(self, msg: Image):
+        im0 = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+
+        if self.transforms:
+            im = self.transforms(im0)  # transforms
+        else:
+            im = LetterBox(self.imgsz, self.auto, stride=self.stride)(image=im0)
+            im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+            im = np.ascontiguousarray(im)  # contiguous
+
+        self.callback(im, im0, msg.header)
+
+    def _cv2_rotate(self, im):
+        # Rotate a cv2 video manually
+        if self.orientation == 0:
+            return cv2.rotate(im, cv2.ROTATE_90_CLOCKWISE)
+        elif self.orientation == 180:
+            return cv2.rotate(im, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        elif self.orientation == 90:
+            return cv2.rotate(im, cv2.ROTATE_180)
+        return im
 
 
 class RosTracker:
@@ -186,7 +222,7 @@ class RosTracker:
         if det is not None and len(det):
             shape = im0.shape
             masks = process_mask(
-                proto[0], det[:, 6:], det[:, :4], im.shape[2:], upsample=True)  # HWC
+                proto[0], det[:, 6:], det[:, :4], im.shape[2:], upsample=True).gt(0.5)  # HWC
             det[:, :4] = scale_boxes(
                 im.shape[2:], det[:, :4], shape).round()  # rescale boxes to im0 size
 
