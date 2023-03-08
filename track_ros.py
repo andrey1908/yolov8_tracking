@@ -4,6 +4,7 @@ from cv_bridge import CvBridge
 from sensor_msgs.msg import Image as RosImage
 import cv2
 import os
+from tqdm import tqdm
 # limit the number of cpus used by high performance libraries
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -48,7 +49,9 @@ from trackers.multi_tracker_zoo import create_tracker
 class RosTracker:
     def __init__(
             self,
-            source='0',
+            images_folder=None,
+            input_topic=None,
+            output_topic=None,
             yolo_weights=WEIGHTS / 'yolov5m.pt',  # model.pt path(s),
             reid_weights=WEIGHTS / 'osnet_x0_25_msmt17.pt',  # model.pt path,
             tracking_method='strongsort',
@@ -84,6 +87,11 @@ class RosTracker:
             vis=False):
 
         # Load model
+        assert images_folder or (input_topic and output_topic)
+
+        self.images_folder = images_folder
+        self.input_topic = input_topic
+        self.output_topic = output_topic
         self.half = half
         self.conf_thres = conf_thres
         self.iou_thres = iou_thres
@@ -115,18 +123,39 @@ class RosTracker:
         self.curr_frame, self.prev_frame = None, None
 
         # Dataloader
-        self.dataset = RosImages(
-            "/kitti/camera_color_left/image_raw",
-            self.track_callback,
-            imgsz=self.imgsz,
-            stride=self.stride,
-            auto=self.pt,
-            transforms=getattr(self.model.model, 'transforms', None))
-        self.pub = rospy.Publisher("/tracked_image", RosImage, queue_size=1)
-        self.bridge = CvBridge()
+        if self.images_folder is None:
+            self.pub = rospy.Publisher(self.output_topic, RosImage, queue_size=1)
+            self.bridge = CvBridge()
+            self.dataset = RosImages(
+                self.input_topic,
+                self.track_ros,
+                imgsz=self.imgsz,
+                stride=self.stride,
+                auto=self.pt,
+                transforms=getattr(self.model.model, 'transforms', None))
+        else:
+            self.save_dir = increment_path(Path(ROOT / 'runs' / 'track') / 'exp')
+            os.makedirs(self.save_dir, exist_ok=False)
+            self.dataset = LoadImages(
+                self.images_folder,
+                imgsz=self.imgsz,
+                stride=self.stride,
+                auto=self.pt,
+                transforms=getattr(self.model.model, 'transforms', None))
+            for i, batch in enumerate(tqdm(self.dataset)):
+                im, im0 = batch[1], batch[2]
+                out_img = self.track(im, im0)
+                save_path = str(self.save_dir / f"{i}.png")
+                cv2.imwrite(save_path, out_img)
+
+    def track_ros(self, im, im0, header):
+        out_img = self.track(im, im0)
+        msg = self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8")
+        msg.header = header
+        self.pub.publish(msg)
 
     @torch.no_grad()
-    def track_callback(self, im, im0, header):
+    def track(self, im, im0):
         with self.dt[0]:
             im = torch.from_numpy(im).to(self.device)
             im = im.half() if self.half else im.float()  # uint8 to fp16/32
@@ -194,11 +223,8 @@ class RosTracker:
         out_img = out_img.byte().cpu().numpy()
         out_img = cv2.resize(out_img, (im0.shape[1], im0.shape[0]),
             interpolation=cv2.INTER_NEAREST)
-        msg = self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8")
-        msg.header = header
-        self.pub.publish(msg)
-
         self.prev_frame = self.curr_frame
+        return out_img
 
 
 def parse_opt():
@@ -207,7 +233,9 @@ def parse_opt():
     parser.add_argument('--reid-weights', type=Path, default=WEIGHTS / 'osnet_x0_25_msmt17.pt')
     parser.add_argument('--tracking-method', type=str, default='bytetrack', help='strongsort, ocsort, bytetrack')
     parser.add_argument('--tracking-config', type=Path, default=None)
-    parser.add_argument('--source', type=str, default='0', help='file/dir/URL/glob, 0 for webcam')  
+    parser.add_argument('--images-folder', type=str, default=None)
+    parser.add_argument('--input-topic', type=str, default=None)
+    parser.add_argument('--output-topic', type=str, default=None)
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='NMS IoU threshold')
@@ -248,9 +276,11 @@ def parse_opt():
 def main(opt):
     check_requirements(requirements=ROOT / 'requirements.txt', exclude=('tensorboard', 'thop'))
     
-    rospy.init_node("tracker")
+    if opt.images_folder is None:
+        rospy.init_node("tracker")
     ros_tracker = RosTracker(**vars(opt))
-    rospy.spin()
+    if opt.images_folder is None:
+        rospy.spin()
 
 
 if __name__ == "__main__":
