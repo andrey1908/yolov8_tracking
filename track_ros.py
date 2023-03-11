@@ -160,7 +160,7 @@ class RosTracker:
 
         # Dataloader
         if self.images_folder is None:
-            self.pub = rospy.Publisher(self.output_topic, RosImage, queue_size=1)
+            self.pub = rospy.Publisher(self.output_topic, Image, queue_size=1)
             self.bridge = CvBridge()
             self.dataset = RosImages(
                 self.input_topic,
