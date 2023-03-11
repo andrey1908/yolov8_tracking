@@ -1,4 +1,4 @@
-```--vis``` option is used for colorful output
+`--vis` option is used for colorful output
 
 Read images from folder:
 ```
