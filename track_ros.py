@@ -183,6 +183,11 @@ class RosTracker:
                 out_img = self.track(im, im0)
                 save_path = str(self.save_dir / f"{i}.png")
                 cv2.imwrite(save_path, out_img)
+            t = tuple(x.t / self.seen * 1E3 for x in self.dt)  # speeds per image
+            LOGGER.info(f'Speed: %.1fms pre-process, '
+                        f'%.1fms inference, %.1fms NMS, '
+                        f'%.1fms {tracking_method} update per image '
+                        f'at shape {(1, 3, *imgsz)}' % t)
 
     def track_ros(self, im, im0, header):
         out_img = self.track(im, im0)
