@@ -135,6 +135,7 @@ class RosTracker:
         self.agnostic_nms = agnostic_nms
         self.max_det = max_det
         self.vis = vis
+        self.tracking_method = tracking_method
 
         self.device = select_device(device)
         self.model = AutoBackend(
@@ -148,7 +149,7 @@ class RosTracker:
 
         # Create as many strong sort instances as there are video sources
         self.tracker = create_tracker(
-            tracking_method, tracking_config, reid_weights, self.device, self.half)
+            self.tracking_method, tracking_config, reid_weights, self.device, self.half)
         if hasattr(self.tracker, 'model'):
             if hasattr(self.tracker.model, 'warmup'):
                 self.tracker.model.warmup()
@@ -183,11 +184,7 @@ class RosTracker:
                 out_img = self.track(im, im0)
                 save_path = str(self.save_dir / f"{i}.png")
                 cv2.imwrite(save_path, out_img)
-            t = tuple(x.t / self.seen * 1E3 for x in self.dt)  # speeds per image
-            LOGGER.info(f'Speed: %.1fms pre-process, '
-                        f'%.1fms inference, %.1fms NMS, '
-                        f'%.1fms {tracking_method} update per image '
-                        f'at shape {(1, 3, *imgsz)}' % t)
+            self.dump_profilers()
 
     def track_ros(self, im, im0, header):
         out_img = self.track(im, im0)
@@ -267,6 +264,15 @@ class RosTracker:
         self.prev_frame = self.curr_frame
         return out_img
 
+    def dump_profilers(self):
+        if self.seen == 0:
+            return
+        t = tuple(x.t / self.seen * 1E3 for x in self.dt)  # speeds per image
+        LOGGER.info(f'Speed: %.1fms pre-process, '
+                    f'%.1fms inference, %.1fms NMS, '
+                    f'%.1fms {self.tracking_method} update per image '
+                    f'at shape {(1, 3, *self.imgsz)}' % t)
+
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -322,6 +328,7 @@ def main(opt):
     ros_tracker = RosTracker(**vars(opt))
     if opt.images_folder is None:
         rospy.spin()
+        ros_tracker.dump_profilers()
 
 
 if __name__ == "__main__":
