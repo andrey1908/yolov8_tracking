@@ -1,10 +1,12 @@
 import argparse
 import rospy
+import rostopic
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
 import cv2
 import os
 from tqdm import tqdm
+from time import sleep
 # limit the number of cpus used by high performance libraries
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -50,7 +52,12 @@ from trackers.multi_tracker_zoo import create_tracker
 class RosImages:
     # YOLOv8 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
     def __init__(self, topic, callback, imgsz=640, stride=32, auto=True, transforms=None):
-        self.sub = rospy.Subscriber(topic, Image, self.cb)
+        topic_type, _, _ = rostopic.get_topic_class(topic)
+        while topic_type is None:
+            sleep(0.1)
+            topic_type, _, _ = rostopic.get_topic_class(topic)
+
+        self.sub = rospy.Subscriber(topic, topic_type, self.cb)
         self.callback = callback
         self.bridge = CvBridge()
 
@@ -59,8 +66,13 @@ class RosImages:
         self.auto = auto
         self.transforms = transforms  # optional
 
-    def cb(self, msg: Image):
-        im0 = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+    def cb(self, msg):
+        if msg._type == "sensor_msgs/Image":
+            im0 = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+        elif msg._type == "sensor_msgs/CompressedImage":
+            im0 = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='passthrough')
+        else:
+            raise RuntimeError("Unkown message type")
 
         if self.transforms:
             im = self.transforms(im0)  # transforms
@@ -327,6 +339,7 @@ def main(opt):
         rospy.init_node("tracker")
     ros_tracker = RosTracker(**vars(opt))
     if opt.images_folder is None:
+        print("Spinning...")
         rospy.spin()
         ros_tracker.dump_profilers()
 
